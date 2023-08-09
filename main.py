@@ -145,30 +145,6 @@ for x1, x2 in roi:
     ax2.plot(t, [None]*len(df.query(f"`GNSS: PPS Timestamp [s]` < {x1}").index) + [region_gradient*(x-mean_t)+mean_T for x in region_t] + [None]*len(df.query(f"`GNSS: PPS Timestamp [s]` > {x2}").index), c="blue")
 
 
-"""set_marker = [0 if -0.0001 < j < 0.0001 else None for i, j in zip(temp_in_grad.index, temp_in_grad.values)]
-#ax2.scatter(t, set_marker, label="T_in'(t) = 0")
-
-######################################
-###    PRINT MEAN SADDLE POINTS    ###
-######################################
-
-saddlepoints = []
-for x1, x2 in roi:
-    m = []
-    for mt, is_marker in zip(t, set_marker):
-        if is_marker is None: continue
-        if x1 <= mt <= x2:
-            m.append(mt)
-    if len(m) == 0: continue
-    saddlepoints.append(sum(m)/len(m))
-
-
-for i in saddlepoints:
-    ax2.axvline(i, color="green")
-    print(f"T_in'({i}) = 0")
-
-"""
-
 ###########################################################################
 ###                     CALCULATE T_out(t) = T_in(t)                    ###
 ###########################################################################
