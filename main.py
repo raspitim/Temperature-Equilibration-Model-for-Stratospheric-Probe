@@ -18,15 +18,14 @@ roi = [
 ###                         PLOTTING DATA & ROI                         ###
 ###########################################################################
 fig, ax1 = plt.subplots(1, 1, sharex=True)
+ax2 = ax1.twinx()
+ax2.set_ylabel("Temperaturänderung in K/dt")
 
 t = df.loc[:, "GNSS: PPS Timestamp [s]"]
 
 temp_in = df.loc[:, "Temperature: Board [degC]"].rolling(10).mean()
 
 temp_out = df.loc[:, ("Temperature: Ext LM75 1 [degC]", "Temperature: Ext MS8607 1 [degC]")].mean(axis=1).rolling(10).mean()
-
-plt_temp_out = ax1.plot(t, temp_out, label="Außentemperatur")
-plt_temp_in = ax1.plot(t, temp_in, label="Innentemperatur")
 
 ax1.set_xlabel('Time [s]')
 ax1.set_ylabel('Innen- und Außentemperatur [degC]')
@@ -40,6 +39,9 @@ plt_regions[0].set_label("Region of interest")
 ###########################################################################
 #### LINEAR REGRESSION ON THE OUTDOOR TEMPTERATURE'S REGION OF INTEREST ###
 ###########################################################################
+
+linear_T_out = ([None]*len(t.index))
+
 for x1, x2 in roi:
 
     region_data = df.query(f"{x1} <= `GNSS: PPS Timestamp [s]` <= {x2}")
@@ -63,12 +65,14 @@ for x1, x2 in roi:
         else:
             region_gradient = g
 
-    ax1.plot(t, [None]*len(df.query(f"`GNSS: PPS Timestamp [s]` < {x1}").index) + [region_gradient*(x-mean_t)+mean_T for x in region_t] + [None]*len(df.query(f"`GNSS: PPS Timestamp [s]` > {x2}").index), c="red")
+    
+    final_lst = [None]*len(df.query(f"`GNSS: PPS Timestamp [s]` < {x1}").index) + [region_gradient*(x-mean_t)+mean_T for x in region_t] + [None]*len(df.query(f"`GNSS: PPS Timestamp [s]` > {x2}").index)
 
+    linear_T_out = [i+j if (j is not None and i is not None) else i if i is not None else j for i, j in zip(linear_T_out, final_lst)]
 
 
 ###########################################################################
-###          CALCULARE T_in'(t) = 0 USING DIFFERENCE QUOTIENT           ###
+###            CALCULATE T_in'(t) USING DIFFERENCE QUOTIENT             ###
 ###########################################################################
 window_width = 100
 
@@ -77,7 +81,7 @@ def gradient_window(x):
     for i, j in roi:
         if i <= sum(x.index)/window_width <= j:
             in_roi = True
-    if not in_roi: return np.NaN
+    #if not in_roi: return np.NaN
 
     gradient = None
 
@@ -92,8 +96,7 @@ def gradient_window(x):
             gradient /= 2
         else:
             gradient = g
-
-    return gradient
+    return gradient if gradient is not None else np.nan
 
 temp_in_t = temp_in.copy()
 temp_in_t.index = t.values
@@ -102,9 +105,7 @@ temp_in_grad = temp_in_t.rolling(window=window_width, center=True).apply(gradien
 
 df["T_in'"] = list(temp_in_grad)
 
-ax2 = ax1.twinx()
-ax2.plot(t, temp_in_grad, color="purple", label="Differenzenquotient von T_in(t) ≈ T_in'(t)")
-ax2.set_ylabel("Temperaturänderung in K/dt")
+
 
 
 ###########################################################################
@@ -146,25 +147,81 @@ for x1, x2 in roi:
     
 
     linear_T_in_grad = [i+j if (j is not None and i is not None) else i if i is not None else j for i, j in zip(linear_T_in_grad, final_lst)]
-ax2.plot(t, linear_T_in_grad, c="blue")
 
 
 ###########################################################################
-###                     CALCULATE T_out(t) = T_in(t)                    ###
+###                   CALCULATE β (T_out(t) = T_in(t))                  ###
 ###########################################################################
 
-equalpoints = []
 betas = []
-for it, iTi, iTo, iTi_grad in zip(t, temp_in, temp_out, linear_T_in_grad):
-    if abs(iTi - iTo) < 0.01 and it > 0:
+for it, iTi, iTo, iTi_grad, iTi_grad_linear, iTo_linear in zip(t, temp_in, temp_out, temp_in_grad, linear_T_in_grad, linear_T_out):
+    if  True in [x1 <= it <= x2 for x1, x2 in roi] and abs(iTi - iTo) < 0.01 and it > 0:
         ax2.axvline(it, color="green")
-        equalpoints.append(f"T_in({it}s) = α({iTo}{' - ' if iTi >= 0 else ' + '}{abs(iTi)}) + β = β = {iTi_grad*60*60} K/h")
         betas.append(iTi_grad)
 
-plt.text(0.02, 0.01, "\n".join(equalpoints), fontsize=10, transform=plt.gcf().transFigure)
-plt.text(0.5, 0.01, f"Mittelwert: β = {(sum(betas)/len(betas))*60*60} K/h", fontsize=10, transform=plt.gcf().transFigure)
+
+beta = sum(betas)/len(betas)
+print(f"β = {beta} K/s")
 
 
+###########################################################################
+###           CALCULATING α USING DIFFERENTIAL EQUATION ON ROI          ###
+###########################################################################
+
+alphas = []
+
+for (it, iTi, iTo, iTi_grad, iTo_linear, iTi_grad_linear) in zip(t, temp_in, temp_out, temp_in_grad, linear_T_out, linear_T_in_grad):
+    if not True in [x1 <= it <= x2 for x1, x2 in roi] or abs(iTo - iTi) < 0.01: 
+        alphas.append(np.NaN)
+        continue
+    alphas.append((iTi_grad - beta) / (iTo - iTi))
+
+
+
+alphas_t = alphas
+alphas = [i for i in alphas if not np.isnan(i)]
+print(min(alphas), max(alphas))
+
+
+alpha = sum(alphas)/len(alphas)
+
+###########################################################################
+###             PREDICT T_in'(t) USING DIFFERENTIAL EQUATION            ###
+###########################################################################
+
+pred_T_in_grad = []
+
+for (iTo, iTi) in zip(temp_out, temp_in):
+    pred_T_in_grad.append(alpha*(iTo - iTi) + beta)
+
+L = {
+    "To": {"label": "Außentemperatur"},
+    "Ti": {"label": "Innentemperatur"},
+    "lTo": {"c": "red"},
+    "lTig": {"c": "blue"},
+    "alphas": {"c": "yellow"},
+    "Tig": {"label": "Differenzenquotient von T_in(t) ≈ T_in'(t)", "c": "purple"},
+    "pTig": {"c": "orange"}
+}
+
+
+# COMMENT/UNCOMMENT FOLLOWING LINES TO SELECT PLOTTING DATA:
+
+ax1.plot(t, temp_out, **L["To"])            # Measured outdoor temperature of the probe                                                      [Default: ENABLED]
+ax1.plot(t, temp_in, **L["Ti"])             # Measured indoor (circuit board) temperature of the probe                                       [Default: ENABLED]
+
+# ax1.plot(t, linear_T_out, **L["lTo"])       # Linear Regression on the ROI of the outdoor temperature                                        [Default: ENABLED]
+# ax2.plot(t, linear_T_in_grad, **L["lTig"])  # Linear Regression on the ROI of the indoor temperatures gradient                               [Default: ENABLED]
+
+# ax2.plot(t, alphas_t, L["alphas"])          # Calculated α values (differential equation coefficient) for each timestamp                   [Default: DISABLED]
+
+ax2.plot(t, temp_in_grad, **L["Tig"])       # Indoor temperatures gradient (derivative) caclulated over rolling window
+ax2.plot(t, pred_T_in_grad, **L["pTig"])    # Indoor temperatires derivative predicted over differental equation using calculated α and β    [Default: ENABLED]
+
+
+text = f"Mean value: α = {((sum(alphas)/len(alphas))*60*60).__round__(4)} h⁻¹\nMean value: β = {((beta)*60*60).__round__(4)} K/h"
+
+plt.text(0.01, 0.01, text, fontsize=10, transform=plt.gcf().transFigure)
 
 ### SHOW PLOT WINDOW ###
 handles1, labels1 = ax1.get_legend_handles_labels()
