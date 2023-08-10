@@ -9,7 +9,7 @@ from matplotlib.legend_handler import HandlerTuple
 roi = [
     [600, 1000],
     [1200, 2800],
-    [4000, 7500],
+    [4000, 7700],
     [7800, 8200],
     [8900, 9800],
     [10150, 10450]
@@ -110,6 +110,7 @@ ax2.set_ylabel("Temperaturänderung in K/dt")
 ###########################################################################
 ####LINEAR REG. ON THE INDOOR TEMPTERATURE-GRADIENT'S REGION OF INTEREST###
 ###########################################################################
+linear_T_in_grad = ([None]*len(t.index))
 for x1, x2 in roi:
 
     region_data = df.query(f"{x1} <= `GNSS: PPS Timestamp [s]` <= {x2}")
@@ -131,7 +132,6 @@ for x1, x2 in roi:
             break
         
 
-    print(t0, T0)
 
     for rt, rT in zip(region_t[start_idx:], region_temp_in_grad[start_idx:]):
         g = (rT-T0)/(rt-t0)
@@ -142,19 +142,27 @@ for x1, x2 in roi:
         else:
             region_gradient = g
     
-    ax2.plot(t, [None]*len(df.query(f"`GNSS: PPS Timestamp [s]` < {x1}").index) + [region_gradient*(x-mean_t)+mean_T for x in region_t] + [None]*len(df.query(f"`GNSS: PPS Timestamp [s]` > {x2}").index), c="blue")
+    final_lst = [None]*len(df.query(f"`GNSS: PPS Timestamp [s]` < {x1}").index) + [region_gradient*(x-mean_t)+mean_T for x in region_t] + [None]*len(df.query(f"`GNSS: PPS Timestamp [s]` > {x2}").index)
+    
+
+    linear_T_in_grad = [i+j if (j is not None and i is not None) else i if i is not None else j for i, j in zip(linear_T_in_grad, final_lst)]
+ax2.plot(t, linear_T_in_grad, c="blue")
 
 
 ###########################################################################
 ###                     CALCULATE T_out(t) = T_in(t)                    ###
 ###########################################################################
 
-
-for it, iTi, iTo in zip(t, temp_in, temp_out):
-    if iTi - iTo == 0 and it > 0:
+equalpoints = []
+betas = []
+for it, iTi, iTo, iTi_grad in zip(t, temp_in, temp_out, linear_T_in_grad):
+    if abs(iTi - iTo) < 0.01 and it > 0:
         ax2.axvline(it, color="green")
-        print(it)
+        equalpoints.append(f"T_in({it}s) = α({iTo}{' - ' if iTi >= 0 else ' + '}{abs(iTi)}) + β = β = {iTi_grad*60*60} K/h")
+        betas.append(iTi_grad)
 
+plt.text(0.02, 0.01, "\n".join(equalpoints), fontsize=10, transform=plt.gcf().transFigure)
+plt.text(0.5, 0.01, f"Mittelwert: β = {(sum(betas)/len(betas))*60*60} K/h", fontsize=10, transform=plt.gcf().transFigure)
 
 
 
