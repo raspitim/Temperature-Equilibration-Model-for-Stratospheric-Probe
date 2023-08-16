@@ -3,9 +3,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from matplotlib.legend_handler import HandlerTuple
+text_alpha, text_beta = None, None
+
 ###########################################################################
 ###                       SET REGIONS OF INTEREST                       ###
 ###########################################################################
+
+
 roi = [
     [600, 1000],
     [1200, 2800],
@@ -14,9 +18,13 @@ roi = [
     [8900, 9800],
     [10150, 10450]
 ]
+
+
 ###########################################################################
 ###                         PLOTTING DATA & ROI                         ###
 ###########################################################################
+
+
 fig, ax1 = plt.subplots(1, 1, sharex=True)
 ax2 = ax1.twinx()
 ax2.set_ylabel("Temperaturänderung in K/dt")
@@ -36,9 +44,12 @@ plt_regions = [ax1.axvspan(x1, x2, alpha=0.2, color='green') for x1, x2 in roi]
 
 plt_regions[0].set_label("Region of interest")
 
+
+
 ###########################################################################
 #### LINEAR REGRESSION ON THE OUTDOOR TEMPTERATURE'S REGION OF INTEREST ###
 ###########################################################################
+
 
 linear_T_out = ([None]*len(t.index))
 
@@ -74,6 +85,8 @@ for x1, x2 in roi:
 ###########################################################################
 ###            CALCULATE T_in'(t) USING DIFFERENCE QUOTIENT             ###
 ###########################################################################
+
+
 window_width = 100
 
 def gradient_window(x):
@@ -106,11 +119,11 @@ temp_in_grad = temp_in_t.rolling(window=window_width, center=True).apply(gradien
 df["T_in'"] = list(temp_in_grad)
 
 
-
-
 ###########################################################################
 ####LINEAR REG. ON THE INDOOR TEMPTERATURE-GRADIENT'S REGION OF INTEREST###
 ###########################################################################
+
+
 linear_T_in_grad = ([None]*len(t.index))
 for x1, x2 in roi:
 
@@ -156,7 +169,7 @@ for x1, x2 in roi:
 betas = []
 for it, iTi, iTo, iTi_grad, iTi_grad_linear, iTo_linear in zip(t, temp_in, temp_out, temp_in_grad, linear_T_in_grad, linear_T_out):
     if  True in [x1 <= it <= x2 for x1, x2 in roi] and abs(iTi - iTo) < 0.01 and it > 0:
-        ax2.axvline(it, color="green")
+        ax1.axvline(it, color="green")
         betas.append(iTi_grad)
 
 
@@ -194,9 +207,44 @@ pred_T_in_grad = []
 for (iTo, iTi) in zip(temp_out, temp_in):
     pred_T_in_grad.append(alpha*(iTo - iTi) + beta)
 
+
+
+###########################################################################
+###       PREDICT T_in(t) USING DISCREDITED DIFFERENTIAL EQUATION       ###
+###########################################################################
+
+START_IDX = 400
+
+
+temp_in_calc = [None]*START_IDX
+s = 0
+
+
+t_0 = t[START_IDX]
+# t, temp_in, temp_out, temp_in_grad, linear_T_out, linear_T_in_grad
+
+#alpha = 0.6 / (60*60)
+
+for idx in t.index[START_IDX:-1]:
+    t_idx = t[idx] - t_0
+    t_idx_1 = t[idx+1] - t_0
+    
+    a = (((np.exp(alpha*t_idx) * temp_out[idx]) + (np.exp(alpha*t_idx_1) * temp_out[idx+1])) / 2) * (t[idx+1] - t[idx]) 
+
+    temp_in_calc.append((beta / alpha) + alpha * np.exp(-alpha*t_idx) * (s+a))
+    if not np.isnan(a):
+        s += a
+temp_in_calc += [None]*1
+
+
+
+
+
+
 L = {
     "To": {"label": "Außentemperatur"},
     "Ti": {"label": "Innentemperatur"},
+    "Tic": {"c": "green", "label": "Errechnete Innentemperatur"},
     "lTo": {"c": "red"},
     "lTig": {"c": "blue"},
     "alphas": {"c": "yellow"},
@@ -206,22 +254,25 @@ L = {
 
 
 # COMMENT/UNCOMMENT FOLLOWING LINES TO SELECT PLOTTING DATA:
-
+ax1.plot(t, temp_in_calc, **L["Tic"])
 ax1.plot(t, temp_out, **L["To"])            # Measured outdoor temperature of the probe                                                      [Default: ENABLED]
 ax1.plot(t, temp_in, **L["Ti"])             # Measured indoor (circuit board) temperature of the probe                                       [Default: ENABLED]
+
 
 # ax1.plot(t, linear_T_out, **L["lTo"])       # Linear Regression on the ROI of the outdoor temperature                                        [Default: ENABLED]
 # ax2.plot(t, linear_T_in_grad, **L["lTig"])  # Linear Regression on the ROI of the indoor temperatures gradient                               [Default: ENABLED]
 
-# ax2.plot(t, alphas_t, L["alphas"])          # Calculated α values (differential equation coefficient) for each timestamp                   [Default: DISABLED]
+#ax2.plot(t, alphas_t, **L["alphas"])        # Calculated α values (differential equation coefficient) for each timestamp                   [Default: DISABLED]
 
 ax2.plot(t, temp_in_grad, **L["Tig"])       # Indoor temperatures gradient (derivative) caclulated over rolling window
-ax2.plot(t, pred_T_in_grad, **L["pTig"])    # Indoor temperatires derivative predicted over differental equation using calculated α and β    [Default: ENABLED]
+#ax2.plot(t, pred_T_in_grad, **L["pTig"])    # Indoor temperatires derivative predicted over differental equation using calculated α and β    [Default: ENABLED]
 
 
-text = f"Mean value: α = {((sum(alphas)/len(alphas))*60*60).__round__(4)} h⁻¹\nMean value: β = {((beta)*60*60).__round__(4)} K/h"
+text_alpha = f"Mean value: α = {((sum(alphas)/len(alphas))*60*60).__round__(4)} h⁻¹"
+text_beta  = f"Mean value: β = {((beta)*60*60).__round__(4)} K/h"
 
-plt.text(0.01, 0.01, text, fontsize=10, transform=plt.gcf().transFigure)
+_ = "\n"
+plt.text(0.01, 0.01, f"{text_alpha if text_alpha else ''}{_ if text_alpha and text_beta else ''}{text_beta if text_beta else ''}", fontsize=10, transform=plt.gcf().transFigure)
 
 ### SHOW PLOT WINDOW ###
 handles1, labels1 = ax1.get_legend_handles_labels()
